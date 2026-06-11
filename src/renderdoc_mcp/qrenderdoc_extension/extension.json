@@ -1,0 +1,9 @@
+{
+  "extension_api": 1,
+  "name": "renderdoc-mcp bridge",
+  "version": "0.3.0",
+  "minimum_renderdoc": "1.20",
+  "description": "Bridge for renderdoc-mcp fallback exports through qrenderdoc.",
+  "author": "renderdoc-mcp",
+  "url": "local://renderdoc-mcp"
+}
