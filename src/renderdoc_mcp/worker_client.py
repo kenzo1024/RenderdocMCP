@@ -75,6 +75,7 @@ class WorkerClient:
         env = os.environ.copy()
         src_dir = _src_dir()
         env["PYTHONPATH"] = _prepend_path(env.get("PYTHONPATH", ""), src_dir)
+        env["PYTHONIOENCODING"] = "utf-8"
 
         renderdoc_modules = env.get("RENDERDOC_MODULE_PATH") or r"C:\Program Files\RenderDoc\pymodules"
         env["RENDERDOC_MODULE_PATH"] = renderdoc_modules

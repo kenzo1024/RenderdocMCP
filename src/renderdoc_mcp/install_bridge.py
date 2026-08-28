@@ -2,6 +2,7 @@
 
 import os
 import shutil
+import tempfile
 
 
 EXTENSION_NAME = "renderdoc_mcp_bridge"
@@ -33,11 +34,31 @@ def install_bridge(roots=None):
         if not os.path.isdir(root):
             os.makedirs(root)
         dest = os.path.join(root, EXTENSION_NAME)
+        preset_backup = _backup_presets(dest)
         if os.path.isdir(dest):
             shutil.rmtree(dest)
         shutil.copytree(src, dest)
+        _restore_presets(preset_backup, os.path.join(dest, "presets"))
         installed.append(dest)
     return installed
+
+
+def _backup_presets(dest):
+    presets = os.path.join(dest, "presets")
+    if not os.path.isdir(presets):
+        return None
+    backup = tempfile.mkdtemp(prefix="renderdoc_mcp_presets_")
+    shutil.copytree(presets, os.path.join(backup, "presets"))
+    return os.path.join(backup, "presets")
+
+
+def _restore_presets(backup, presets):
+    if not backup or not os.path.isdir(backup):
+        return
+    if os.path.isdir(presets):
+        shutil.rmtree(presets)
+    shutil.copytree(backup, presets)
+    shutil.rmtree(os.path.dirname(backup), ignore_errors=True)
 
 
 def main():

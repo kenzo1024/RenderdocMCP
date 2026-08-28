@@ -15,7 +15,10 @@ from renderdoc_mcp.exporter import (
     export_mesh_stage,
 )
 from renderdoc_mcp.renderdoc_api import error
+from renderdoc_mcp.resource_export import export_resource_asset
 from renderdoc_mcp.session import get_session
+from renderdoc_mcp.shader_material import export_shader_material, material_summary
+from renderdoc_mcp.shader_roundtrip import validate_vertex_shader_roundtrip
 
 
 def _call(method, params):
@@ -77,6 +80,47 @@ def _call(method, params):
             skip_small_textures=params.get("skip_small_textures", True),
             save_depth=params.get("save_depth", False),
             max_vertices=params.get("max_vertices", 0),
+        )
+
+    if method == "export_resource_asset":
+        return export_resource_asset(
+            session,
+            params["event_id"],
+            params["output_dir"],
+            prefix=params.get("prefix", "asset"),
+            config=params.get("config"),
+            preset_name=params.get("preset_name"),
+            preset_dir=params.get("preset_dir"),
+            texture_file_type=params.get("texture_file_type", "png"),
+            texture_stages=params.get("texture_stages"),
+            include_textures=params.get("include_textures", True),
+            include_render_targets=params.get("include_render_targets", False),
+            skip_small_textures=params.get("skip_small_textures", True),
+            save_depth=params.get("save_depth", False),
+            max_vertices=params.get("max_vertices", 0),
+        )
+
+    if method == "export_shader_material":
+        err = session.set_event(params["event_id"])
+        if err:
+            return err
+        bundle = export_shader_material(
+            session.controller,
+            params["event_id"],
+            params["output_dir"],
+            prefix=params.get("prefix", "shader"),
+            include_textures=params.get("include_textures", True),
+            include_mesh=params.get("include_mesh", True),
+        )
+        return material_summary(bundle)
+
+    if method == "validate_vertex_shader":
+        return validate_vertex_shader_roundtrip(
+            session.controller,
+            params["event_id"],
+            params["hlsl_path"],
+            params["output_dir"],
+            params.get("reference_hlsl_path"),
         )
 
     return error("Unknown worker method: {}".format(method), "UNKNOWN_METHOD")

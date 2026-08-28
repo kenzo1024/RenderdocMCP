@@ -2,24 +2,35 @@
 
 import json
 import os
+import re
 import tempfile
 import traceback
 
-from PySide2.QtCore import QObject, QTimer
+IPC_NAMESPACE_ENV = "RENDERDOC_MCP_IPC_NAMESPACE"
 
-IPC_DIR = os.path.join(tempfile.gettempdir(), "renderdoc_mcp")
+
+def _ipc_dir():
+    root = os.path.join(tempfile.gettempdir(), "renderdoc_mcp")
+    namespace = os.environ.get(IPC_NAMESPACE_ENV, "").strip()
+    if not namespace:
+        return root
+    safe_namespace = re.sub(r"[^A-Za-z0-9_.-]+", "_", namespace).strip("._")
+    return os.path.join(root, safe_namespace or "default")
+
+
+IPC_DIR = _ipc_dir()
 REQUEST_FILE = os.path.join(IPC_DIR, "request.json")
 RESPONSE_FILE = os.path.join(IPC_DIR, "response.json")
+RESPONSE_TEMP_FILE = os.path.join(IPC_DIR, "response.tmp.json")
 LOCK_FILE = os.path.join(IPC_DIR, "lock")
 
 
-class BridgeServer(QObject):
+class BridgeServer:
     """Polls request.json and writes response.json."""
 
-    def __init__(self, handler, parent=None):
-        super(BridgeServer, self).__init__(parent)
+    def __init__(self, handler, ctx):
         self.handler = handler
-        self._timer = None
+        self.ctx = ctx
         self._running = False
         if not os.path.isdir(IPC_DIR):
             os.makedirs(IPC_DIR)
@@ -27,31 +38,28 @@ class BridgeServer(QObject):
     def start(self):
         self._running = True
         self._cleanup_files()
-        self._timer = QTimer(self)
-        self._timer.timeout.connect(self._poll_request)
-        self._timer.start(100)
+        self._schedule_next()
         print("[renderdoc-mcp] bridge IPC: %s" % IPC_DIR)
 
     def stop(self):
         self._running = False
-        if self._timer:
-            self._timer.stop()
-            self._timer = None
         self._cleanup_files()
 
     def _poll_request(self):
         if not self._running:
             return
-        if not os.path.exists(REQUEST_FILE) or os.path.exists(LOCK_FILE):
-            return
 
         try:
+            if not os.path.exists(REQUEST_FILE) or os.path.exists(LOCK_FILE):
+                return
             with open(REQUEST_FILE, "r", encoding="utf-8") as f:
                 request = json.load(f)
-            os.remove(REQUEST_FILE)
+            try:
+                os.remove(REQUEST_FILE)
+            except FileNotFoundError:
+                return
             response = self.handler.handle(request)
-            with open(RESPONSE_FILE, "w", encoding="utf-8") as f:
-                json.dump(response, f, ensure_ascii=False, separators=(",", ":"))
+            self._write_response(response)
         except Exception as exc:
             traceback.print_exc()
             try:
@@ -59,15 +67,27 @@ class BridgeServer(QObject):
                     "id": None,
                     "error": {"code": -32603, "message": str(exc)},
                 }
-                with open(RESPONSE_FILE, "w", encoding="utf-8") as f:
-                    json.dump(response, f, ensure_ascii=False, separators=(",", ":"))
+                self._write_response(response)
             except Exception:
                 pass
+        finally:
+            if self._running:
+                self._schedule_next()
+
+    def _schedule_next(self):
+        self.ctx.DelayedCallback(100, self._poll_request)
 
     def _cleanup_files(self):
-        for path in (REQUEST_FILE, RESPONSE_FILE, LOCK_FILE):
+        for path in (REQUEST_FILE, RESPONSE_FILE, RESPONSE_TEMP_FILE, LOCK_FILE):
             try:
                 if os.path.exists(path):
                     os.remove(path)
             except Exception:
                 pass
+
+    def _write_response(self, response):
+        with open(RESPONSE_TEMP_FILE, "w", encoding="utf-8") as response_file:
+            json.dump(response, response_file, ensure_ascii=False, separators=(",", ":"))
+            response_file.flush()
+            os.fsync(response_file.fileno())
+        os.replace(RESPONSE_TEMP_FILE, RESPONSE_FILE)
