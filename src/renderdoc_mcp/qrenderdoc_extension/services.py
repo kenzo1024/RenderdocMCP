@@ -117,6 +117,101 @@ class BridgeServices:
             pass
         return result
 
+    def capture_mesh_viewer(self, params):
+        """Select an event, open Mesh Viewer, and save a screenshot of that widget."""
+        result = self.focus_event(params)
+        output_path = params.get("output_path")
+        if not output_path:
+            raise ValueError("output_path is required")
+
+        output_path = os.path.normpath(output_path)
+        directory = os.path.dirname(output_path)
+        if directory and not os.path.isdir(directory):
+            os.makedirs(directory)
+
+        self.ctx.ShowMeshPreview()
+        preview = self.ctx.GetMeshPreview()
+        try:
+            preview.SetPreviewStage(rd.MeshDataStage.VSIn)
+            preview.ShowMeshData(rd.MeshDataStage.VSIn)
+        except Exception:
+            pass
+        widget = preview.Widget()
+        surface = _prepare_vs_in_preview(widget)
+        result["visualisation"] = "Solid Colour"
+        result["preview"] = surface is not None
+        if surface is None:
+            saved = widget.grab().save(output_path)
+        else:
+            saved = _save_native_preview(surface, output_path)
+        result["output_path"] = output_path
+        result["saved"] = bool(saved)
+        return result
+
+    def export_present(self, params):
+        if not self.ctx.IsCaptureLoaded():
+            raise ValueError("No capture loaded")
+
+        output_dir = params.get("output_dir")
+        if not output_dir:
+            raise ValueError("output_dir is required")
+
+        _ensure_project_src()
+        from renderdoc_mcp.capture_query import export_present
+
+        result = {"data": None, "error": None}
+
+        def callback(controller):
+            try:
+                session = BridgeSession(controller)
+                result["data"] = export_present(session, output_dir)
+            except Exception as exc:
+                import traceback
+
+                result["error"] = "%s\n%s" % (str(exc), traceback.format_exc())
+
+        self._invoke(callback)
+        if result["error"]:
+            raise ValueError(result["error"])
+        return result["data"]
+
+    def export_present_overlay(self, params):
+        if not self.ctx.IsCaptureLoaded():
+            raise ValueError("No capture loaded")
+
+        event_id = params.get("event_id")
+        output_dir = params.get("output_dir")
+        if event_id is None:
+            raise ValueError("event_id is required")
+        if not output_dir:
+            raise ValueError("output_dir is required")
+
+        _ensure_project_src()
+        from renderdoc_mcp.capture_query import export_present_overlay
+
+        result = {"data": None, "error": None}
+
+        def callback(controller):
+            try:
+                session = BridgeSession(controller)
+                result["data"] = export_present_overlay(
+                    session,
+                    int(event_id),
+                    output_dir,
+                    overlay=params.get("overlay", "drawcall"),
+                    crop=params.get("crop", True),
+                    pad=params.get("pad", 80),
+                )
+            except Exception as exc:
+                import traceback
+
+                result["error"] = "%s\n%s" % (str(exc), traceback.format_exc())
+
+        self._invoke(callback)
+        if result["error"]:
+            raise ValueError(result["error"])
+        return result["data"]
+
     def export_draw_bundle(self, params):
         if not self.ctx.IsCaptureLoaded():
             raise ValueError("No capture loaded")
@@ -148,6 +243,45 @@ class BridgeServices:
                     skip_small_textures=params.get("skip_small_textures", True),
                     save_depth=params.get("save_depth", False),
                     max_vertices=params.get("max_vertices", 0),
+                )
+            except Exception as exc:
+                import traceback
+
+                result["error"] = "%s\n%s" % (str(exc), traceback.format_exc())
+
+        self._invoke(callback)
+        if result["error"]:
+            raise ValueError(result["error"])
+        return result["data"]
+
+    def find_drawcalls_by_reference(self, params):
+        if not self.ctx.IsCaptureLoaded():
+            raise ValueError("No capture loaded")
+
+        reference_image_path = params.get("reference_image_path")
+        output_dir = params.get("output_dir")
+        if not reference_image_path:
+            raise ValueError("reference_image_path is required")
+        if not output_dir:
+            raise ValueError("output_dir is required")
+
+        _ensure_project_src()
+        from renderdoc_mcp.drawcall_finder import find_drawcalls_by_reference
+
+        result = {"data": None, "error": None}
+
+        def callback(controller):
+            try:
+                result["data"] = find_drawcalls_by_reference(
+                    BridgeSession(controller),
+                    reference_image_path,
+                    output_dir,
+                    anchor_event_ids=params.get("anchor_event_ids"),
+                    event_start=params.get("event_start", 0),
+                    event_end=params.get("event_end", 0),
+                    min_indices=params.get("min_indices", 3),
+                    max_vertices=params.get("max_vertices", 2048),
+                    min_overlap=params.get("min_overlap", 0.2),
                 )
             except Exception as exc:
                 import traceback
@@ -502,6 +636,36 @@ class BridgeServices:
             "replaced": replaced,
         }
 
+    def list_tail_draws(self, params):
+        """List draw and marker events at or after start_event. No replay."""
+        if not self.ctx.IsCaptureLoaded():
+            raise ValueError("No capture loaded")
+        start = int(params.get("start_event", 0))
+        limit = int(params.get("limit", 120))
+        rows = []
+
+        def walk(actions):
+            for action in actions:
+                eid = int(action.eventId)
+                if eid >= start:
+                    rows.append(
+                        {
+                            "event_id": eid,
+                            "flags": int(action.flags),
+                            "indices": int(action.numIndices),
+                            "name": action.customName or "",
+                        }
+                    )
+                if action.children:
+                    walk(action.children)
+
+        def callback(controller):
+            walk(controller.GetRootActions())
+
+        self._invoke(callback)
+        tail = rows[-limit:] if len(rows) > limit else rows
+        return {"total": len(rows), "draws": tail}
+
     def _invoke(self, callback):
         self.ctx.Replay().BlockInvoke(callback)
 
@@ -561,6 +725,215 @@ def _ensure_project_src():
     src = os.environ.get("RENDERDOC_MCP_SRC", r"D:\_Proj\renderdoc-mcp\src")
     if src and os.path.isdir(src) and src not in sys.path:
         sys.path.insert(0, src)
+
+
+def _qt_widgets():
+    for module_name in ("PySide2.QtWidgets", "PySide6.QtWidgets"):
+        try:
+            return __import__(module_name, fromlist=["QWidget"])
+        except ImportError:
+            continue
+    return None
+
+
+def _qt_gui():
+    for module_name in ("PySide2.QtGui", "PySide6.QtGui"):
+        try:
+            return __import__(module_name, fromlist=["QPixmap"])
+        except ImportError:
+            continue
+    return None
+
+
+def _qt_core():
+    for module_name in ("PySide2.QtCore", "PySide6.QtCore"):
+        try:
+            return __import__(module_name, fromlist=["QEventLoop"])
+        except ImportError:
+            continue
+    return None
+
+
+def _wait_ms(milliseconds):
+    widgets = _qt_widgets()
+    if widgets is None:
+        return
+    app = widgets.QApplication.instance()
+    if app is None:
+        return
+    import time
+
+    deadline = time.time() + (milliseconds / 1000.0)
+    while time.time() < deadline:
+        app.processEvents()
+        time.sleep(0.05)
+
+
+def _prepare_vs_in_preview(widget):
+    """Show the Mesh Viewer Preview tab's VS In mesh, large enough to photograph."""
+    widgets = _qt_widgets()
+    if widgets is None or not hasattr(widget, "findChild"):
+        return None
+
+    try:
+        tabs = widget.findChild(widgets.QTabWidget, "outputTabs")
+        render = widget.findChild(widgets.QWidget, "render")
+    except Exception:
+        return None
+    if render is None:
+        return None
+
+    if tabs is not None:
+        tabs.setCurrentIndex(0)
+        tabs.setMinimumSize(960, 640)
+
+    for splitter in widget.findChildren(widgets.QSplitter):
+        sizes = splitter.sizes()
+        total = sum(sizes)
+        if len(sizes) == 2 and total > 200:
+            splitter.setSizes([int(total * 0.22), int(total * 0.78)])
+
+    render.setMinimumSize(900, 520)
+    combo = widget.findChild(widgets.QComboBox, "visualisation")
+    if combo is not None and combo.currentIndex() != 1:
+        combo.setCurrentIndex(1)
+    wire = widget.findChild(widgets.QToolButton, "wireframeRender")
+    if wire is not None and not wire.isChecked():
+        wire.setChecked(True)
+    reset = widget.findChild(widgets.QToolButton, "resetCamera")
+    if reset is not None:
+        reset.click()
+
+    try:
+        widget.raise_()
+        widget.activateWindow()
+    except Exception:
+        pass
+    _wait_ms(400)
+    surface = _preview_surface(render, widget)
+    try:
+        _tilt_flat_mesh(surface)
+    except Exception:
+        pass
+    _wait_ms(500)
+    return render
+
+
+def _preview_surface(render, widget):
+    widgets = _qt_widgets()
+    top = int(widget.window().winId())
+    best = None
+    best_area = 0
+    for child in render.findChildren(widgets.QWidget):
+        handle = int(child.winId())
+        if handle == 0 or handle == top:
+            continue
+        area = child.width() * child.height()
+        if child.height() > 80 and area > best_area:
+            best = child
+            best_area = area
+    return best if best is not None else render
+
+
+def _tilt_flat_mesh(surface):
+    """Orbit the preview so a flat ground sheet is seen from above, not edge-on."""
+    core = _qt_core()
+    widgets = _qt_widgets()
+    gui = _qt_gui()
+    if core is None or widgets is None or gui is None or surface is None:
+        return False
+    app = widgets.QApplication.instance()
+    if app is None:
+        return False
+    width = max(int(surface.width()), 1)
+    height = max(int(surface.height()), 1)
+    start_y = int(height * 0.75)
+    end_y = int(height * 0.30)
+    x = width // 2
+    button = core.Qt.LeftButton
+    local = core.QPoint(x, start_y)
+    global_pos = surface.mapToGlobal(local)
+    press = gui.QMouseEvent(
+        core.QEvent.MouseButtonPress, local, global_pos, button, button, core.Qt.NoModifier
+    )
+    app.sendEvent(surface, press)
+    steps = 8
+    for step in range(1, steps + 1):
+        y = start_y + (end_y - start_y) * step // steps
+        point = core.QPoint(x, y)
+        move = gui.QMouseEvent(
+            core.QEvent.MouseMove,
+            point,
+            surface.mapToGlobal(point),
+            core.Qt.NoButton,
+            button,
+            core.Qt.NoModifier,
+        )
+        app.sendEvent(surface, move)
+    release_point = core.QPoint(x, end_y)
+    release = gui.QMouseEvent(
+        core.QEvent.MouseButtonRelease,
+        release_point,
+        surface.mapToGlobal(release_point),
+        button,
+        core.Qt.NoButton,
+        core.Qt.NoModifier,
+    )
+    app.sendEvent(surface, release)
+    return True
+
+
+def _save_native_preview(surface, output_path):
+    gui = _qt_gui()
+    core = _qt_core()
+    if gui is None or core is None:
+        return False
+    window = surface.window()
+    pixmap = gui.QPixmap.grabWindow(int(window.winId()))
+    if pixmap.isNull():
+        return False
+    origin = window.mapToGlobal(core.QPoint(0, 0))
+    corner = surface.mapToGlobal(core.QPoint(0, 0))
+    cropped = pixmap.copy(
+        corner.x() - origin.x(),
+        corner.y() - origin.y(),
+        max(surface.width(), 1),
+        max(surface.height(), 1),
+    )
+    if cropped.isNull() or cropped.width() < 32 or cropped.height() < 32:
+        return False
+    return bool(cropped.save(output_path))
+
+
+def _show_solid_mesh(widget):
+    """Turn the Mesh Viewer preview from None to Solid Colour before the grab."""
+    combo_type = None
+    app = None
+    for module_name in ("PySide2.QtWidgets", "PySide6.QtWidgets"):
+        try:
+            module = __import__(module_name, fromlist=["QComboBox", "QApplication"])
+        except ImportError:
+            continue
+        combo_type = module.QComboBox
+        app = module.QApplication
+        break
+    if combo_type is None:
+        return None
+
+    chosen = None
+    for combo in widget.findChildren(combo_type):
+        for index in range(combo.count()):
+            text = str(combo.itemText(index))
+            if "Solid" in text:
+                combo.setCurrentIndex(index)
+                chosen = text
+                break
+        if chosen:
+            break
+    if app is not None:
+        for _ in range(8):
+            app.processEvents()
+    return chosen
 
 
 def _parse_event_id(value):

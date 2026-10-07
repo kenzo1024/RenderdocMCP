@@ -9,11 +9,18 @@ import os
 import sys
 import traceback
 
+from renderdoc_mcp.capture_query import (
+    describe_event,
+    export_present,
+    export_present_overlay,
+    find_draws_by_texture,
+)
 from renderdoc_mcp.exporter import (
     export_draw_bundle,
     export_event_textures,
     export_mesh_stage,
 )
+from renderdoc_mcp.drawcall_finder import find_drawcalls_by_reference
 from renderdoc_mcp.renderdoc_api import error
 from renderdoc_mcp.resource_export import export_resource_asset
 from renderdoc_mcp.session import get_session
@@ -40,6 +47,35 @@ def _call(method, params):
     err = session.require_open()
     if err:
         return err
+
+    if method == "describe_event":
+        return describe_event(
+            session,
+            params["event_id"],
+            output_dir=params.get("output_dir"),
+            file_type=params.get("file_type", "png"),
+        )
+
+    if method == "find_draws_by_texture":
+        return find_draws_by_texture(
+            session,
+            params.get("name_parts"),
+            event_start=params.get("event_start", 0),
+            event_end=params.get("event_end", 0),
+        )
+
+    if method == "export_present":
+        return export_present(session, params.get("output_dir"))
+
+    if method == "export_present_overlay":
+        return export_present_overlay(
+            session,
+            params.get("event_id"),
+            params.get("output_dir"),
+            overlay=params.get("overlay", "drawcall"),
+            crop=params.get("crop", True),
+            pad=params.get("pad", 80),
+        )
 
     if method == "export_mesh_stage_data":
         return export_mesh_stage(
@@ -80,6 +116,19 @@ def _call(method, params):
             skip_small_textures=params.get("skip_small_textures", True),
             save_depth=params.get("save_depth", False),
             max_vertices=params.get("max_vertices", 0),
+        )
+
+    if method == "find_drawcalls_by_reference":
+        return find_drawcalls_by_reference(
+            session,
+            params["reference_image_path"],
+            params["output_dir"],
+            anchor_event_ids=params.get("anchor_event_ids"),
+            event_start=params.get("event_start", 0),
+            event_end=params.get("event_end", 0),
+            min_indices=params.get("min_indices", 3),
+            max_vertices=params.get("max_vertices", 2048),
+            min_overlap=params.get("min_overlap", 0.2),
         )
 
     if method == "export_resource_asset":

@@ -30,8 +30,14 @@ $env:RENDERDOC_MODULE_PATH = "C:\Program Files\RenderDoc\pymodules"
 - `show_activity_log()`：从 MCP 主动显示或前置 Activity Log 底部面板
 - `connect_to_gui_capture()`：通过 RenderDoc GUI bridge 打开当前 GUI 里的捕获
 - `export_mesh_stage_data(...)`：导出单个 mesh stage
-- `export_event_textures(...)`：导出指定 EID 的纹理
+- `export_event_textures(...)`：导出指定 EID 的纹理。2D 仍是单张图；3D / Cube / 数组会写出全部 slice 和一份 sidecar json，浮点格式用 EXR
 - `export_draw_bundle(...)`：一次导出 VSIn、VSOut、纹理和 manifest
+- `find_drawcalls_by_reference(...)`：用参考图、锚点 EID、PostVS 屏幕包围盒和管线签名筛选角色部件，并生成 SVG Mesh 联络表
+- `describe_event(event_id, output_dir=None)`：列出这一笔绑定的每一张纹理，带显存尺寸和格式。传入 `output_dir` 时把整张图存下来
+- `find_draws_by_texture(name_parts, event_start=0, event_end=0)`：按贴图资源名片段找出绘制
+- `export_present(output_dir)`：导出最后一次 Present 的交换链画面
+- `export_present_overlay(event_id, output_dir, overlay="drawcall", crop=True, pad=80)`：用 Texture Viewer 的 DebugOverlay 标出指定 EID，再叠到整个 rdc 最后一次 Present 上。`overlay` 常用 `drawcall`（品红填充）和 `wireframe`
+- `capture_mesh_viewer(event_id, output_path)`：在当前 qrenderdoc 里打开 Mesh Viewer 并保存截图。扩展更新后需要重启 RenderDoc
 
 GUI 聚焦功能依赖 qrenderdoc bridge。安装或更新扩展后，需要重启 RenderDoc：
 

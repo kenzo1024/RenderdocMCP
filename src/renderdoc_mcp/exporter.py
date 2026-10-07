@@ -10,12 +10,16 @@ import os
 
 from renderdoc_mcp.mesh_decode import get_mesh_stage_data, jsonify_vertices
 from renderdoc_mcp.renderdoc_api import (
+    CUBE_FACE_NAMES,
     error,
     file_types,
     rd,
     safe_filename,
     shader_stages,
     texture_desc_to_dict,
+    texture_dest_file_type,
+    texture_outputs,
+    texture_size_label,
 )
 
 
@@ -264,9 +268,10 @@ def _export_stage_textures(session, state, stage_name, stage_enum, output_dir, p
                     "reason": "small_texture",
                 })
                 continue
-            filename = f"{prefix}_{stage_name}_t{index}_{resource.name}_{tex.width}x{tex.height}.{file_type.lower()}"
-            output_path = os.path.join(output_dir, safe_filename(filename))
-            _save_texture(session, tex.resourceId, output_path, file_type)
+            basename = safe_filename(
+                f"{prefix}_{stage_name}_t{index}_{resource.name}_{texture_size_label(tex)}"
+            )
+            result = export_bound_texture(session, tex, output_dir, basename, file_type)
             exported.append({
                 "type": "shader_resource",
                 "stage": stage_name,
@@ -274,7 +279,10 @@ def _export_stage_textures(session, state, stage_name, stage_enum, output_dir, p
                 "name": resource.name,
                 "resource_id": str(tex.resourceId),
                 "texture": texture_desc_to_dict(tex),
-                "output_path": output_path,
+                "kind": result["kind"],
+                "output_path": result["output_path"],
+                "slices": result.get("slices", []),
+                "file_type": result.get("file_type", file_type),
             })
 
 
@@ -337,12 +345,67 @@ def _export_depth_target(session, state, event_id, output_dir, prefix, file_type
     })
 
 
+def export_bound_texture(session, tex, output_dir, basename, file_type="png"):
+    """按维度导出一张绑定纹理。
+
+    2D 仍是单文件。3D / Cube / 数组会写出全部 slice，并在旁边放一份 json，
+    方便 Unity 拼回 Texture3D / Cubemap。浮点格式改走 EXR。
+    """
+    dest = texture_dest_file_type(tex, file_type)
+    kind, outputs = texture_outputs(tex, basename, dest)
+    os.makedirs(output_dir, exist_ok=True)
+    slices = []
+    for slice_index, relative in outputs:
+        path = os.path.join(output_dir, relative)
+        _save_texture_slice(session, tex.resourceId, path, dest, slice_index)
+        slices.append({"index": slice_index, "path": os.path.normpath(path)})
+
+    if kind == "2d":
+        return {"kind": kind, "output_path": slices[0]["path"], "file_type": dest, "slices": []}
+
+    sidecar = {
+        "kind": kind,
+        "width": int(tex.width),
+        "height": int(tex.height),
+        "depth": int(getattr(tex, "depth", 1) or 1),
+        "array_size": int(getattr(tex, "arraysize", 1) or 1),
+        "format": str(tex.format.Name()) if hasattr(tex.format, "Name") else str(tex.format),
+        "file_type": dest,
+        "layout": "z-slices" if kind == "3d" else ("cube-faces" if kind == "cube" else "array-slices"),
+        "face_order": list(CUBE_FACE_NAMES) if kind == "cube" else [],
+        "slices": slices,
+    }
+    sidecar_name = {
+        "3d": basename + "_volume.json",
+        "cube": basename + "_cube.json",
+        "array": basename + "_array.json",
+    }[kind]
+    sidecar_path = os.path.join(output_dir, sidecar_name)
+    with open(sidecar_path, "w", encoding="utf-8") as handle:
+        json.dump(sidecar, handle, ensure_ascii=False, indent=2)
+    return {
+        "kind": kind,
+        "output_path": os.path.normpath(sidecar_path),
+        "file_type": dest,
+        "slices": [item["path"] for item in slices],
+    }
+
+
 def _save_texture(session, resource_id, output_path, file_type):
-    """调用 RenderDoc SaveTexture 写图片。"""
+    """2D / RT 用的单切片导出，保持旧调用不变。"""
+    _save_texture_slice(session, resource_id, output_path, file_type, 0)
+
+
+def _save_texture_slice(session, resource_id, output_path, file_type, slice_index):
+    """调用 RenderDoc SaveTexture 写一张 slice / cube face。"""
+    parent = os.path.dirname(output_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
     save = rd.TextureSave()
     save.resourceId = resource_id
     save.destType = file_types()[file_type.lower()]
     save.mip = 0
-    save.slice.sliceIndex = 0
+    save.slice.sliceIndex = int(slice_index)
+    save.slice.slicesAsGrid = False
     save.alpha = rd.AlphaMapping.Preserve
     session.controller.SaveTexture(save, output_path)

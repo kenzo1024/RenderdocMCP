@@ -94,6 +94,44 @@ def focus_event(event_id):
     return result
 
 
+def capture_mesh_viewer(event_id, output_path):
+    """Ask the open qrenderdoc window for a Mesh Viewer screenshot."""
+    global _backend
+    try:
+        result = gui_bridge.capture_mesh_viewer(event_id, output_path)
+    except gui_bridge.GUIBridgeError as exc:
+        return error(str(exc), "QRENDERDOC_BRIDGE_ERROR")
+
+    _backend = "qrenderdoc_bridge"
+    return result
+
+
+def describe_event(params):
+    return get_worker_client().call("describe_event", params)
+
+
+def find_draws_by_texture(params):
+    return get_worker_client().call("find_draws_by_texture", params)
+
+
+def export_present(params):
+    if _backend == "qrenderdoc_bridge":
+        try:
+            return gui_bridge.export_present(**params)
+        except gui_bridge.GUIBridgeError as exc:
+            return error(str(exc), "QRENDERDOC_BRIDGE_ERROR")
+    return get_worker_client().call("export_present", params)
+
+
+def export_present_overlay(params):
+    if _backend == "qrenderdoc_bridge":
+        try:
+            return gui_bridge.export_present_overlay(**params)
+        except gui_bridge.GUIBridgeError as exc:
+            return error(str(exc), "QRENDERDOC_BRIDGE_ERROR")
+    return get_worker_client().call("export_present_overlay", params)
+
+
 def close_capture():
     global _backend
     if _backend == "qrenderdoc_bridge":
@@ -109,6 +147,15 @@ def export_draw_bundle(params):
         except gui_bridge.GUIBridgeError as exc:
             return error(str(exc), "QRENDERDOC_BRIDGE_ERROR")
     return get_worker_client().call("export_draw_bundle", params)
+
+
+def find_drawcalls_by_reference(params):
+    if _backend == "qrenderdoc_bridge":
+        try:
+            return gui_bridge.find_drawcalls_by_reference(**params)
+        except gui_bridge.GUIBridgeError as exc:
+            return error(str(exc), "QRENDERDOC_BRIDGE_ERROR")
+    return get_worker_client().call("find_drawcalls_by_reference", params)
 
 
 def export_shader_material(params):

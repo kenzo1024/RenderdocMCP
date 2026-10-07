@@ -119,6 +119,35 @@ def focus_event(event_id):
     return call("focus_event", {"event_id": event_id})
 
 
+def capture_mesh_viewer(event_id, output_path):
+    """打开 Mesh Viewer 并保存这个窗口的截图。"""
+    return call(
+        "capture_mesh_viewer",
+        {"event_id": event_id, "output_path": output_path},
+        timeout=60.0,
+    )
+
+
+def export_present(output_dir):
+    """导出当前 GUI 捕获里最后一次 Present 的交换链画面。"""
+    return call("export_present", {"output_dir": output_dir}, timeout=120.0)
+
+
+def export_present_overlay(event_id, output_dir, overlay="drawcall", crop=True, pad=80):
+    """用 Texture Viewer overlay 标出指定 EID，再叠到最后一次 Present。"""
+    return call(
+        "export_present_overlay",
+        {
+            "event_id": event_id,
+            "output_dir": output_dir,
+            "overlay": overlay,
+            "crop": crop,
+            "pad": pad,
+        },
+        timeout=180.0,
+    )
+
+
 def record_activity(operation, status, message, event_id=None, details=None):
     """Write an MCP-side result into the qrenderdoc activity window."""
     return call(
@@ -166,6 +195,33 @@ def export_draw_bundle(
             "max_vertices": max_vertices,
         },
         timeout=300.0,
+    )
+
+
+def find_drawcalls_by_reference(
+    reference_image_path,
+    output_dir,
+    anchor_event_ids=None,
+    event_start=0,
+    event_end=0,
+    min_indices=3,
+    max_vertices=2048,
+    min_overlap=0.2,
+):
+    """Rank draw calls near a reference subject and write an SVG contact sheet."""
+    return call(
+        "find_drawcalls_by_reference",
+        {
+            "reference_image_path": reference_image_path,
+            "output_dir": output_dir,
+            "anchor_event_ids": anchor_event_ids,
+            "event_start": event_start,
+            "event_end": event_end,
+            "min_indices": min_indices,
+            "max_vertices": max_vertices,
+            "min_overlap": min_overlap,
+        },
+        timeout=600.0,
     )
 
 

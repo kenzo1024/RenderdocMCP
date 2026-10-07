@@ -1,7 +1,8 @@
 """MCP 工具入口。
 
-这里故意只注册少量工具：打开捕获、连接 GUI 当前捕获、导出 mesh、导出纹理、
-导出完整 bundle。复杂分析功能都不放进来，保持这个 MCP 专注资源导出。
+工具只覆盖从捕获里取资源和看绑定：打开捕获、导出 mesh 和纹理、
+按贴图名找绘制、列出一笔 EID 的全部绑定、把 Texture Viewer overlay
+叠到最后一次 Present，以及从 Mesh Viewer 截图。
 """
 
 import atexit
@@ -89,6 +90,62 @@ def close_capture():
 def _open_capture(filepath):
     """包装 RenderDoc 加载错误，避免把 Python 堆栈直接暴露给 MCP 调用侧。"""
     return backend.open_capture(filepath)
+
+
+@mcp.tool()
+def describe_event(event_id, output_dir=None, file_type="png"):
+    """列出这一笔绑定的每一张纹理。尺寸和格式以显存为准，不假设只有一张 basemap。"""
+    return to_json(
+        backend.describe_event(
+            {
+                "event_id": event_id,
+                "output_dir": output_dir,
+                "file_type": file_type,
+            }
+        )
+    )
+
+
+@mcp.tool()
+def find_draws_by_texture(name_parts, event_start=0, event_end=0):
+    """按贴图资源名片段找出绘制。name_parts 可以是逗号分隔字符串。"""
+    return to_json(
+        backend.find_draws_by_texture(
+            {
+                "name_parts": name_parts,
+                "event_start": event_start,
+                "event_end": event_end,
+            }
+        )
+    )
+
+
+@mcp.tool()
+def export_present(output_dir):
+    """导出最后一次 Present 的交换链画面。"""
+    return to_json(backend.export_present({"output_dir": output_dir}))
+
+
+@mcp.tool()
+def export_present_overlay(event_id, output_dir, overlay="drawcall", crop=True, pad=80):
+    """用 Texture Viewer 的 DebugOverlay 标出指定 EID，再叠到整个 rdc 最后一次 Present 上。"""
+    return to_json(
+        backend.export_present_overlay(
+            {
+                "event_id": event_id,
+                "output_dir": output_dir,
+                "overlay": overlay,
+                "crop": crop,
+                "pad": pad,
+            }
+        )
+    )
+
+
+@mcp.tool()
+def capture_mesh_viewer(event_id, output_path):
+    """在已打开的 qrenderdoc 里打开 Mesh Viewer，并保存这个窗口的截图。"""
+    return to_json(backend.capture_mesh_viewer(event_id, output_path))
 
 
 @mcp.tool()
@@ -180,6 +237,34 @@ def export_draw_bundle(
 
 
 @mcp.tool()
+def find_drawcalls_by_reference(
+    reference_image_path,
+    output_dir,
+    anchor_event_ids=None,
+    event_start=0,
+    event_end=0,
+    min_indices=3,
+    max_vertices=2048,
+    min_overlap=0.2,
+):
+    """按参考图和锚点 DrawCall 筛选同一角色部件，并生成 Mesh 联络表。"""
+    return to_json(
+        backend.find_drawcalls_by_reference(
+            {
+                "reference_image_path": reference_image_path,
+                "output_dir": output_dir,
+                "anchor_event_ids": anchor_event_ids,
+                "event_start": event_start,
+                "event_end": event_end,
+                "min_indices": min_indices,
+                "max_vertices": max_vertices,
+                "min_overlap": min_overlap,
+            }
+        )
+    )
+
+
+@mcp.tool()
 def export_resource_asset(
     event_id,
     output_dir,
@@ -237,6 +322,17 @@ def export_shader_material(
             },
         )
     )
+
+
+@mcp.tool()
+def decompile_pixel_shader(event_id, output_dir, prefix="ps"):
+    """用 3Dmigoto cmd_Decompiler 把当前捕获的 Pixel Shader DXBC 转成 HLSL。不读取 RenderDoc Shader Viewer 的自定义工具设置。"""
+    try:
+        from renderdoc_mcp.hlsl_decompiler import decompile_event_pixel_shader
+
+        return to_json(decompile_event_pixel_shader(event_id, os.path.normpath(output_dir), prefix))
+    except Exception as exc:
+        return to_json(error(str(exc), "HLSL_DECOMPILER_ERROR"))
 
 
 @mcp.tool()

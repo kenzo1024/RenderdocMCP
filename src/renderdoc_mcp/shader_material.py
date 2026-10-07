@@ -1,7 +1,8 @@
 """Export the raw material needed to reconstruct a draw-call shader.
 
 The export deliberately keeps DXBC and RenderDoc's disassembly as the source of
-truth.  It does not pass through a third-party HLSL decompiler.
+truth.  HLSL decompilation is a separate step in hlsl_decompiler.py and does not
+use RenderDoc's Shader Viewer custom-tool setting.
 """
 
 import base64

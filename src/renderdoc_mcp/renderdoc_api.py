@@ -133,4 +133,75 @@ def texture_desc_to_dict(tex):
         "format": str(tex.format.Name()),
         "ms_samples": tex.msSamp,
         "byte_size": getattr(tex, "byteSize", None),
+        "kind": texture_kind(tex),
     }
+
+
+CUBE_FACE_NAMES = ("px", "nx", "py", "ny", "pz", "nz")
+
+
+def texture_kind(tex):
+    """区分 2D / 3D 体积 / Cube / 数组。只看 TextureDescription，不读像素。"""
+    depth = int(getattr(tex, "depth", 1) or 1)
+    arraysize = int(getattr(tex, "arraysize", 1) or 1)
+    width = int(getattr(tex, "width", 0) or 0)
+    height = int(getattr(tex, "height", 0) or 0)
+    if getattr(tex, "cubemap", False) or (arraysize == 6 and width == height and depth <= 1):
+        return "cube"
+    if depth > 1:
+        return "3d"
+    if arraysize > 1:
+        return "array"
+    return "2d"
+
+
+def texture_dest_file_type(tex, requested="png"):
+    """8bit UNORM 用 PNG。浮点 / 16bit / BC6 用 EXR，避免 PNG 把 LUT 和阴影压坏。"""
+    requested = (requested or "png").lower()
+    if requested in {"dds", "exr", "hdr"}:
+        return requested
+    fmt = ""
+    try:
+        fmt = str(tex.format.Name())
+    except Exception:
+        fmt = str(getattr(tex, "format", ""))
+    upper = fmt.upper()
+    if any(token in upper for token in ("FLOAT", "R11G11B10", "BC6", "R32", "R16_TYPELESS", "R16_FLOAT")):
+        return "exr"
+    return requested
+
+
+def texture_size_label(tex):
+    """文件名里的尺寸，3D 带 depth，Cube 带 x6。"""
+    kind = texture_kind(tex)
+    width = int(tex.width)
+    height = int(tex.height)
+    if kind == "3d":
+        return "{}x{}x{}".format(width, height, int(tex.depth))
+    if kind == "cube":
+        return "{}x{}x6".format(width, height)
+    if kind == "array":
+        return "{}x{}x{}".format(width, height, int(tex.arraysize))
+    return "{}x{}".format(width, height)
+
+
+def texture_outputs(tex, basename, dest):
+    """返回 (kind, [(slice_index, relative_path), ...])，不碰 RenderDoc。"""
+    kind = texture_kind(tex)
+    dest = dest.lower()
+    if kind == "3d":
+        return kind, [
+            (index, "{}_volume/z{:03d}.{}".format(basename, index, dest))
+            for index in range(int(tex.depth))
+        ]
+    if kind == "cube":
+        return kind, [
+            (index, "{}_cube/{}.{}".format(basename, CUBE_FACE_NAMES[index], dest))
+            for index in range(6)
+        ]
+    if kind == "array":
+        return kind, [
+            (index, "{}_array/s{:03d}.{}".format(basename, index, dest))
+            for index in range(int(tex.arraysize))
+        ]
+    return kind, [(0, "{}.{}".format(basename, dest))]

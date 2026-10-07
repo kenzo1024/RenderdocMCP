@@ -32,6 +32,7 @@ htmlcov/
 .vscode/
 *.swp
 *.swo
+.playwright-cli/
 
 # OS files
 .DS_Store
